@@ -1,0 +1,22 @@
+{
+  "name": "notion-slack-notifications",
+  "version": "1.0.0",
+  "description": "Cloud Function to send Slack notifications for checked items in Notion database",
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "start": "npx functions-framework --target=notifySlack --source=src",
+    "dev": "npx functions-framework --target=notifySlack --source=src --port=8080"
+  },
+  "dependencies": {
+    "@notionhq/client": "^2.2.15",
+    "@google-cloud/functions-framework": "^3.3.0",
+    "@google-cloud/secret-manager": "^5.0.1",
+    "axios": "^1.6.2"
+  },
+  "keywords": ["notion", "slack", "cloud-functions", "google-cloud"],
+  "author": "",
+  "license": "MIT"
+}
