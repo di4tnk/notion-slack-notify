@@ -33,6 +33,46 @@ function verifySlackRequest(rawBodyString, timestamp, signature) {
   }
 }
 
+// users.info API で表示名を取得する。
+// 取得優先順位: profile.display_name → real_name → name → username → id
+// users:read スコープが必要。スコープ未付与・APIエラー時は fallback を返す。
+async function fetchSlackDisplayName(userId, fallback) {
+  const botToken = process.env.SLACK_BOT_TOKEN;
+  if (!botToken) {
+    console.warn('SLACK_BOT_TOKEN not set — cannot call users.info');
+    return fallback;
+  }
+
+  try {
+    const res = await axios.get('https://slack.com/api/users.info', {
+      headers: { Authorization: `Bearer ${botToken}` },
+      params: { user: userId }
+    });
+
+    if (!res.data.ok) {
+      console.warn(`users.info error: ${res.data.error} — falling back to "${fallback}"`);
+      return fallback;
+    }
+
+    const profile = res.data.user?.profile;
+    const u = res.data.user;
+
+    // 空文字は飛ばして最初に値があるものを採用
+    const candidates = [
+      profile?.display_name,
+      u?.real_name,
+      u?.name,
+      u?.id
+    ];
+    const displayName = candidates.find(v => v && v.trim() !== '');
+    return displayName || fallback;
+
+  } catch (err) {
+    console.warn(`Failed to call users.info: ${err.message} — falling back to "${fallback}"`);
+    return fallback;
+  }
+}
+
 // Slackインタラクションを処理し、response_url 経由でメッセージを更新する。
 // index.js が res.status(200).send('') で即座にSlackへ応答した後に呼ばれる想定。
 async function handleSlackInteraction(payload) {
@@ -42,21 +82,16 @@ async function handleSlackInteraction(payload) {
 
   const action = actions[0];
 
-  // block_actions ペイロードの user オブジェクトには id / username / name / team_id しか含まれない。
-  // real_name（例: 田中 大輔）はペイロードに存在しないため、現状は user.name（ハンドル名）を使用。
-  // 表示名を取得するには users.info API を呼ぶ必要があるが、users:read スコープの追加と
-  // Slack App 再インストールが必要になる。スコープを追加できる場合は以下のように取得できる:
-  //   const info = await axios.get('https://slack.com/api/users.info', {
-  //     headers: { Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}` },
-  //     params: { user: user.id }
-  //   });
-  //   const displayName = info.data.user?.profile?.display_name || info.data.user?.real_name;
-  const userName = user.real_name || user.name || user.username || user.id;
+  // block_actions ペイロードの user オブジェクトは id / username / name / team_id のみ。
+  // real_name はペイロードに含まれないため users.info API で取得する（users:read スコープ必要）。
+  // API失敗時は payload の user.name にフォールバック。
+  const payloadFallback = user.name || user.username || user.id;
+  const userName = await fetchSlackDisplayName(user.id, payloadFallback);
 
   if (action.action_id === 'mark_read') {
     const pageId = action.value;
 
-    // Notionの既読者・既読数を更新
+    // Notionの既読者（表示名ベース重複チェック含む）・既読数を更新
     let readerCount = 0;
     try {
       const result = await markPageAsRead(pageId, userName);
@@ -92,7 +127,7 @@ async function handleSlackInteraction(payload) {
         text: `✅ ${userName} が既読マークしました（既読 ${readerCount}人）`,
         blocks: updatedBlocks
       });
-      console.log(`Slack message updated via response_url (page: ${pageId}, count: ${readerCount})`);
+      console.log(`Slack message updated via response_url (page: ${pageId}, user: ${userName}, count: ${readerCount})`);
     } catch (err) {
       console.error('Failed to update Slack message via response_url:', err.message);
     }
