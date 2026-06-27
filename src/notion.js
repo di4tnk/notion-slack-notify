@@ -8,10 +8,8 @@ async function getSecret(secretName) {
   if (!secretManagerClient) {
     secretManagerClient = new SecretManagerServiceClient();
   }
-  
   const projectId = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCP_PROJECT || 'studiokaren';
   const name = `projects/${projectId}/secrets/${secretName}/versions/latest`;
-  
   const [version] = await secretManagerClient.accessSecretVersion({ name });
   return version.payload.data.toString();
 }
@@ -19,9 +17,7 @@ async function getSecret(secretName) {
 async function initializeNotionClient() {
   if (!notionClient) {
     const notionToken = process.env.NOTION_TOKEN || await getSecret('NOTION_TOKEN');
-    notionClient = new Client({
-      auth: notionToken,
-    });
+    notionClient = new Client({ auth: notionToken });
   }
   return notionClient;
 }
@@ -29,102 +25,121 @@ async function initializeNotionClient() {
 async function getNotionPages() {
   try {
     const notion = await initializeNotionClient();
-    
-    // 環境変数から直接取得（デバッグ用）
+
     let databaseId = process.env.NOTION_DATABASE_ID;
-    
-    console.log('Environment check:');
-    console.log('NOTION_DATABASE_ID:', process.env.NOTION_DATABASE_ID);
-    console.log('GOOGLE_CLOUD_PROJECT:', process.env.GOOGLE_CLOUD_PROJECT);
-    
     if (!databaseId) {
-      console.log('Trying to get from Secret Manager...');
       try {
         databaseId = await getSecret('NOTION_DATABASE_ID');
-        console.log('Retrieved from Secret Manager:', databaseId);
       } catch (secretError) {
-        console.error('Secret Manager error:', secretError.message);
         throw new Error('NOTION_DATABASE_ID not found in environment variables or Secret Manager');
       }
     }
-    
-    console.log('Using database ID:', databaseId);
-    
-    // まずデータベースの構造を取得してプロパティを確認
+
     const databaseInfo = await notion.databases.retrieve({ database_id: databaseId });
     console.log('Database properties:', Object.keys(databaseInfo.properties));
-    
-    // チェックボックスプロパティを探す
-    let checkboxProperty = null;
-    for (const [propName, propConfig] of Object.entries(databaseInfo.properties)) {
-      if (propConfig.type === 'checkbox') {
-        console.log(`Found checkbox property: ${propName}`);
-        checkboxProperty = propName;
-        break;
-      }
-    }
-    
-    if (!checkboxProperty) {
-      throw new Error('No checkbox property found in the database. Please add a checkbox property for notifications.');
-    }
-    
-    console.log('Querying Notion database...');
-    
-    const response = await notion.databases.query({
-      database_id: databaseId,
-      filter: {
-        property: checkboxProperty,
-        checkbox: {
-          equals: true
-        }
-      }
-    });
 
-    console.log(`Found ${response.results.length} checked pages`);
+    // 「通知する」チェックボックスプロパティを特定
+    const notifyPropertyName = process.env.NOTION_NOTIFY_PROPERTY || '通知する';
+    if (!databaseInfo.properties[notifyPropertyName]) {
+      throw new Error(`チェックボックスプロパティ "${notifyPropertyName}" が見つかりません`);
+    }
+
+    // 「最終通知日時」の存在確認
+    const lastNotifiedPropertyName = process.env.NOTION_LAST_NOTIFIED_PROPERTY || '最終通知日時';
+    const hasLastNotifiedProp = !!databaseInfo.properties[lastNotifiedPropertyName];
+    if (!hasLastNotifiedProp) {
+      console.warn(`プロパティ "${lastNotifiedPropertyName}" が見つかりません。重複送信ガードが無効になります。Notionデータベースにdate型で追加してください。`);
+    }
+
+    // 「通知する=ON かつ 最終通知日時が空（未通知）」を抽出
+    const filter = hasLastNotifiedProp
+      ? {
+          and: [
+            { property: notifyPropertyName, checkbox: { equals: true } },
+            { property: lastNotifiedPropertyName, date: { is_empty: true } }
+          ]
+        }
+      : { property: notifyPropertyName, checkbox: { equals: true } };
+
+    const response = await notion.databases.query({ database_id: databaseId, filter });
+    console.log(`Found ${response.results.length} pages to notify`);
 
     const pages = response.results.map(page => {
-      // 「お知らせ」プロパティをタイトルとして使用
       const noticeProperty = page.properties['お知らせ'];
       let title = 'Untitled';
-      
+
       if (noticeProperty) {
         if (noticeProperty.type === 'title' && noticeProperty.title.length > 0) {
-          title = noticeProperty.title.map(text => text.plain_text).join('');
+          title = noticeProperty.title.map(t => t.plain_text).join('');
         } else if (noticeProperty.type === 'rich_text' && noticeProperty.rich_text.length > 0) {
-          title = noticeProperty.rich_text.map(text => text.plain_text).join('');
-        } else if (noticeProperty.type === 'text' && noticeProperty.text.length > 0) {
-          title = noticeProperty.text.map(text => text.plain_text).join('');
-        }
-      }
-      
-      // フォールバック: 「お知らせ」がない場合は従来のタイトルプロパティを使用
-      if (title === 'Untitled') {
-        const titleProperty = page.properties['Name'] || page.properties['Title'] || page.properties['タイトル'];
-        if (titleProperty) {
-          if (titleProperty.type === 'title' && titleProperty.title.length > 0) {
-            title = titleProperty.title.map(text => text.plain_text).join('');
-          } else if (titleProperty.type === 'rich_text' && titleProperty.rich_text.length > 0) {
-            title = titleProperty.rich_text.map(text => text.plain_text).join('');
-          }
+          title = noticeProperty.rich_text.map(t => t.plain_text).join('');
         }
       }
 
-      return {
-        id: page.id,
-        title: title,
-        url: page.url,
-        lastEditedTime: page.last_edited_time
-      };
+      if (title === 'Untitled') {
+        const fallback = page.properties['Name'] || page.properties['Title'] || page.properties['タイトル'];
+        if (fallback && fallback.type === 'title' && fallback.title.length > 0) {
+          title = fallback.title.map(t => t.plain_text).join('');
+        }
+      }
+
+      return { id: page.id, title, url: page.url, lastEditedTime: page.last_edited_time };
     });
 
     return pages;
-    
+
   } catch (error) {
     console.error('Error fetching Notion pages:', error);
     throw new Error(`Failed to fetch Notion pages: ${error.message}`);
   }
 }
 
-module.exports = {
-  getNotionPages
-};
+// Slack通知送信後に最終通知日時を現在時刻で更新し、重複送信を防ぐ
+async function updateLastNotifiedAt(pageId) {
+  const notion = await initializeNotionClient();
+  const propertyName = process.env.NOTION_LAST_NOTIFIED_PROPERTY || '最終通知日時';
+  await notion.pages.update({
+    page_id: pageId,
+    properties: {
+      [propertyName]: { date: { start: new Date().toISOString() } }
+    }
+  });
+  console.log(`Updated "${propertyName}" for page ${pageId}`);
+}
+
+// 既読ボタン押下時に既読者・既読数をNotionに反映する
+async function markPageAsRead(pageId, slackUserName) {
+  const notion = await initializeNotionClient();
+  const page = await notion.pages.retrieve({ page_id: pageId });
+
+  const updates = {};
+  const readersPropertyName = process.env.NOTION_READERS_PROPERTY || '既読者';
+  const readerCountPropertyName = process.env.NOTION_READER_COUNT_PROPERTY || '既読数';
+
+  if (page.properties[readersPropertyName]) {
+    const prop = page.properties[readersPropertyName];
+    let currentReaders = '';
+    if (prop.type === 'rich_text' && prop.rich_text.length > 0) {
+      currentReaders = prop.rich_text.map(t => t.plain_text).join('');
+    }
+    const newReaders = currentReaders ? `${currentReaders}, ${slackUserName}` : slackUserName;
+    updates[readersPropertyName] = { rich_text: [{ text: { content: newReaders } }] };
+  } else {
+    console.warn(`Property "${readersPropertyName}" not found — skipping 既読者 update`);
+  }
+
+  if (page.properties[readerCountPropertyName]) {
+    const prop = page.properties[readerCountPropertyName];
+    const currentCount = prop.type === 'number' && prop.number !== null ? prop.number : 0;
+    updates[readerCountPropertyName] = { number: currentCount + 1 };
+  } else {
+    console.warn(`Property "${readerCountPropertyName}" not found — skipping 既読数 update`);
+  }
+
+  if (Object.keys(updates).length > 0) {
+    await notion.pages.update({ page_id: pageId, properties: updates });
+    console.log(`Marked page ${pageId} as read by ${slackUserName}`);
+  }
+}
+
+module.exports = { getNotionPages, updateLastNotifiedAt, markPageAsRead };
