@@ -62,7 +62,16 @@ function buildNotificationBlocks(page) {
   // ④ 区切り線
   blocks.push({ type: 'divider' });
 
-  // ⑤ 既読ボタン（value に Notion ページ ID をセット）
+  // ⑤ 既読ボタンの注記
+  blocks.push({
+    type: 'context',
+    elements: [{
+      type: 'mrkdwn',
+      text: '※この「既読」ボタンを押すと既読になります（Notionページを開くだけではカウントされません）'
+    }]
+  });
+
+  // ⑥ 既読ボタン（value に Notion ページ ID をセット）
   blocks.push({
     type: 'actions',
     elements: [
