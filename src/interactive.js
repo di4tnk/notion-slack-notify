@@ -41,7 +41,17 @@ async function handleSlackInteraction(payload) {
   if (type !== 'block_actions' || !actions?.length) return;
 
   const action = actions[0];
-  const userName = user.real_name || user.name || user.id;
+
+  // block_actions ペイロードの user オブジェクトには id / username / name / team_id しか含まれない。
+  // real_name（例: 田中 大輔）はペイロードに存在しないため、現状は user.name（ハンドル名）を使用。
+  // 表示名を取得するには users.info API を呼ぶ必要があるが、users:read スコープの追加と
+  // Slack App 再インストールが必要になる。スコープを追加できる場合は以下のように取得できる:
+  //   const info = await axios.get('https://slack.com/api/users.info', {
+  //     headers: { Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}` },
+  //     params: { user: user.id }
+  //   });
+  //   const displayName = info.data.user?.profile?.display_name || info.data.user?.real_name;
+  const userName = user.real_name || user.name || user.username || user.id;
 
   if (action.action_id === 'mark_read') {
     const pageId = action.value;
