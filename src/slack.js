@@ -91,7 +91,7 @@ function buildNotificationBlocks(page) {
 async function sendSlackMessage(botToken, channel, page) {
   const payload = {
     channel,
-    text: `📢 お知らせ: ${page.title}`,  // プッシュ通知 / フォールバックテキスト
+    text: `お知らせ: ${page.title}`,  // プッシュ通知 / フォールバックテキスト
     blocks: buildNotificationBlocks(page)
   };
 
