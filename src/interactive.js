@@ -177,7 +177,7 @@ async function handleSlackInteraction(payload) {
         await axios.post(response_url, {
           response_type: 'in_channel',
           replace_original: true,
-          text: '📢 お知らせ',
+          text: 'お知らせ',
           blocks: originalBlocks
         });
       } catch (e) {
