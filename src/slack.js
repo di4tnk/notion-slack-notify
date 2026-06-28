@@ -41,7 +41,7 @@ function buildNotificationBlocks(page) {
 
   blocks.push({
     type: 'section',
-    text: { type: 'mrkdwn', text: `📢 *${page.title}*${metaLine}` },
+    text: { type: 'mrkdwn', text: `*${page.title}*${metaLine}` },
     accessory: {
       type: 'button',
       text: { type: 'plain_text', text: 'Open in Notion', emoji: true },
