@@ -135,7 +135,18 @@ async function handleSlackInteraction(payload) {
 
     const originalBlocks = message?.blocks ?? [];
 
-    // ① 楽観的更新（API呼び出しなしで即座に送信）
+    // ① 本人への即時 ephemeral フィードバック（押せた感。他のメンバーには見えない）
+    try {
+      await axios.post(response_url, {
+        response_type: 'ephemeral',
+        replace_original: false,
+        text: '✅ 確認しました'
+      });
+    } catch (err) {
+      console.warn('Failed to send ephemeral ack:', err.message);
+    }
+
+    // ② 楽観的更新（API呼び出しなしで即座に送信）
     // payload の user から仮の表示名を作る（users.info の往復を待たない）
     const optimisticName = user.name || user.username || user.id;
     const currentCount = extractConfirmedCount(originalBlocks);
@@ -153,11 +164,11 @@ async function handleSlackInteraction(payload) {
       console.warn('Failed to send optimistic update:', err.message);
     }
 
-    // ② 非同期: 正式な表示名を取得（users.info — users:read スコープ必要）
+    // ③ 非同期: 正式な表示名を取得（users.info — users:read スコープ必要）
     const payloadFallback = user.name || user.username || user.id;
     const userName = await fetchSlackDisplayName(user.id, payloadFallback);
 
-    // ③ Notion 確定書き込み（冪等: 連打しても確認数は増えない）
+    // ④ Notion 確定書き込み（冪等: 連打しても確認数は増えない）
     let notionResult;
     try {
       notionResult = await markPageAsConfirmed(pageId, userName, user.id);
@@ -186,7 +197,7 @@ async function handleSlackInteraction(payload) {
       return;
     }
 
-    // ④ 確定値（正式名・Notion確定カウント）でメッセージを整合
+    // ⑤ 確定値（正式名・Notion確定カウント）でメッセージを整合
     // 楽観表示との差（名前の表記、冪等による数の違い）をここで吸収する
     const { readerCount } = notionResult;
     try {
